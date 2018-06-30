@@ -64,7 +64,7 @@ private:
 
 	void AddToken(uint64_t current_time)
 	{
-		const uint64_t total_add = (current_time - last_time_micro)*rate_limit_micro;
+		const uint64_t total_add = (current_time - last_time_micro_)*rate_limit_micro_;
 		if (total_add > history_token_)
 		{
 			const uint64_t add = total_add - history_token_;
@@ -80,7 +80,7 @@ private:
 				{
 					new_token = capacity_;
 					history_token_ = 0;
-					last_time_micro = current_time;
+					last_time_micro_ = current_time;
 				}
 			} while (!std::atomic_compare_exchange_weak(&token_num_, &token_num, new_token));
 		}
@@ -92,9 +92,9 @@ private:
 	std::atomic<bool> valid_{ false };
 	std::atomic<uint32_t> capacity_;//桶大小
 	std::atomic<uint32_t> token_num_;//当前token数量
-	uint64_t last_time_micro;
+	uint64_t last_time_micro_;
 	uint64_t history_token_;
-	double rate_limit_micro;//每微妙的限制
+	double rate_limit_micro_;//每微妙的限制
 };
 
 class RateControl
@@ -117,7 +117,7 @@ public:
 		TokenBucket* token_bucket = s_rate_control_->NewTokenBucket();
 		assert(token_bucket != nullptr);
 		token_bucket->rate_contorl_ = s_rate_control_;
-		token_bucket->rate_limit_micro = rate_limite_micro_second;
+		token_bucket->rate_limit_micro_ = rate_limite_micro_second;
 		token_bucket->history_token_ = 0;
 		token_bucket->token_num_ = 0;
 		const uint32_t rhythm_micro_second = static_cast<uint32_t>(0.5 / rate_limite_micro_second);
@@ -127,7 +127,7 @@ public:
 		}
 		token_bucket->capacity_ = rate_limite * 2;
 		token_bucket->valid_ = true;
-		token_bucket->last_time_micro = s_rate_control_->GetRealTime();
+		token_bucket->last_time_micro_ = s_rate_control_->GetRealTime();
 
 		s_rate_control_->token_buckets_.enqueue(token_bucket);
 
