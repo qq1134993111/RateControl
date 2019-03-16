@@ -271,7 +271,7 @@ public:
 		Stop();
 	}
 private:
-	RateControl()
+	RateControl():token_buckets_(64), reuse_buckets_(64)
 	{
 		running_ = false;
 		token_buckets_size_ = 0;
