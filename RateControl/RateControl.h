@@ -6,7 +6,7 @@
 #include <atomic>
 #include <algorithm>
 
-#include "concurrentqueue.h"
+#include "concurrentqueue/concurrentqueue.h"
 
 #define ACCESS_ONCE(x) (*(volatile decltype(x) *)&(x))
 
@@ -65,12 +65,12 @@ public:
 		capacity_ = capacity;
 	}
 private:
-	TokenBucket() {}
+	TokenBucket() = default;
 
 	void AddToken(uint64_t current_time)
 	{
-		const uint64_t total_add = static_cast<uint64_t>((current_time - last_time_)*rate_limit_micro_);
-		if (total_add > history_token_)
+		const uint64_t total_add = static_cast<uint64_t>((current_time - last_time_) * rate_limit_micro_);
+		if (total_add != 0 && total_add >= history_token_)//至少和上次增加的令牌一样多才放入桶中,这样不用每次都操作.
 		{
 			const uint32_t add = static_cast<uint32_t>(total_add - history_token_);
 			history_token_ = total_add;
@@ -87,19 +87,21 @@ private:
 					history_token_ = 0;
 					last_time_ = current_time;
 				}
+				//原子地比较token_num_与token_num的值,如果相等,则以new_token替换token_num_，否则将token_num_中的值加载进token_num.若成功地更新了token_num_则返回true,否则为false.
 			} while (!std::atomic_compare_exchange_weak(&token_num_, &token_num, new_token));
+			
 		}
 	}
 private:
 	friend class RateControl;
 	RateControl* rate_contorl_ = nullptr;
 
-	bool valid_{ false };
+	bool valid_{ false };//是否还有效
 	uint32_t capacity_;//桶大小
 	std::atomic<uint32_t> token_num_;//当前token数量
-	uint64_t last_time_;
+	uint64_t last_time_;//最后更新时间
 	uint64_t history_token_;
-	double rate_limit_micro_;//每微妙的限制
+	double rate_limit_micro_;//速率,每微秒的限制数量
 };
 
 class RateControl
@@ -123,6 +125,7 @@ public:
 			}
 		}
 
+		//计算速率,每微秒的发送个数.比如每秒发送100个,那么每微秒就是100/1000000个。
 		const double rate_limite_micro_second = RateLimitConvert<Precision>(rate_limit);
 
 		TokenBucket* token_bucket = s_rate_control_->NewTokenBucket();
@@ -131,13 +134,16 @@ public:
 		token_bucket->rate_limit_micro_ = rate_limite_micro_second;
 		token_bucket->history_token_ = 0;
 		token_bucket->token_num_ = 0;
-		const uint32_t rhythm_micro_second = static_cast<uint32_t>(0.5 / rate_limite_micro_second);
+		//计算更新周期,线程每隔多少微秒重新更新每个桶中的令牌数量
+		//比如每秒控制1000个,那么每毫秒(1/1000秒)可以更新一个令牌,也就是1000微秒更新1个。 更新周期为1/速率,即1/1000.
+		const uint32_t rhythm_micro_second = static_cast<uint32_t>(0.5 / rate_limite_micro_second); //设置更新周期比平均的更新周期更小一倍
 		if (rhythm_micro_second < s_rate_control_->rhythm_micro_)
 		{
-			s_rate_control_->rhythm_micro_ = std::max(rhythm_micro_second, kMinRhythmMicro);
+			s_rate_control_->rhythm_micro_ = std::max(rhythm_micro_second, kMinRhythmMicro);//计算合适的更新周期,最小的更新周期为kMinRhythmMicro.
 		}
 
-		token_bucket->capacity_ = static_cast<uint32_t>(s_rate_control_->rhythm_micro_*rate_limite_micro_second * 3);
+		//capacity_设置桶的容量,控制突发流量.
+		token_bucket->capacity_ = static_cast<uint32_t>(s_rate_control_->rhythm_micro_ * rate_limite_micro_second * 3);
 		token_bucket->capacity_ = std::max(token_bucket->capacity_, (uint32_t)3);
 		token_bucket->valid_ = true;
 		token_bucket->last_time_ = s_rate_control_->GetRealTime();
@@ -204,17 +210,13 @@ protected:
 		return current_time_;
 	}
 
-	uint64_t GetCurrentTime() const
-	{
-		return  ACCESS_ONCE(current_time_);
-	}
-
 	void WorkerThread()
 	{
 		TokenBucket* token_bucket = nullptr;
 		while (ACCESS_ONCE(running_))
 		{
 			const uint64_t start_time = GetRealTime();
+
 			const size_t length = token_buckets_.size_approx();
 			for (size_t i = 0; i < length; i++)
 			{
@@ -232,13 +234,12 @@ protected:
 				{
 					reuse_buckets_.enqueue(token_bucket);
 				}
+			}
 
-				const uint64_t diff_time = GetRealTime() - start_time;
-				if (rhythm_micro_ > diff_time)
-				{
-					std::this_thread::sleep_for(std::chrono::microseconds(rhythm_micro_ - diff_time));
-				}
-
+			const uint64_t diff_time = GetRealTime() - start_time;
+			if (rhythm_micro_ > diff_time)//如果更新一轮的时间小于更新周期,剩下的时间就休息
+			{
+				std::this_thread::sleep_for(std::chrono::microseconds(rhythm_micro_ - diff_time));
 			}
 		}
 	}

@@ -10,8 +10,8 @@ public:
 	ConstRateControl() {}
 	~ConstRateControl() {}
 
-	template<typename DURATION>
-	void SetRate(uint32_t count, DURATION duration)
+	template <class _Rep, class _Period>
+	void SetRate(uint32_t count, std::chrono::duration<_Rep, _Period> duration)
 	{
 		v_tp_.resize(count);
 		rate_count_ = count;
